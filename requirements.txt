@@ -1,0 +1,4 @@
+aiogram
+flask
+pillow
+requests

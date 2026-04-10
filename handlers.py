@@ -1,109 +1,91 @@
 import logging
 import io
-import requests
+import os
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import ChatMemberUpdatedFilter, JOIN_TRANSITION
-from aiogram.utils.keyboard import InlineKeyboardBuilder # Re-using builders for simple code
-# Pillow library for image generation
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.client.session.aiohttp import AiohttpSession # Timeout fix ke liye
 from PIL import Image, ImageDraw, ImageFont
 
-# 1. Configuration (Set these as Environment Variables on Render)
-import os
-API_TOKEN = os.environ.get('BOT_TOKEN') # Use Render Env Var
-GROUP_ID = int(os.environ.get('GROUP_ID'))   # Use Render Env Var, must be int
+# 1. Configuration
+API_TOKEN = os.environ.get('BOT_TOKEN')
+GROUP_ID = int(os.environ.get('GROUP_ID'))
 TEMPLATE_PATH = "welcome_template.png"
-FONT_PATH = "Arial.ttf"
-DEFAULT_PROFILE = "placeholder_profile.png" # Path to default image
+FONT_PATH = "Arial.ttf" 
+DEFAULT_PROFILE = "placeholder_profile.png"
 
-# Initialize bot and dispatcher
-logging.basicConfig(level=logging.INFO)
-bot = Bot(token=API_TOKEN)
+# Timeout badhane ke liye session use kar rahe hain
+session = AiohttpSession(timeout=60) # 60 seconds timeout
+bot = Bot(token=API_TOKEN, session=session)
 dp = Dispatcher()
 
-# 2. Dynamic Image Generation Function
 async def generate_welcome_card(user: types.User, chat_title: str):
-    """Generates the unique UI card by overlaying user data on the template."""
     try:
+        # Template ko clean tarike se load karein
         base_img = Image.open(TEMPLATE_PATH).convert("RGBA")
-    except FileNotFoundError:
-        logging.error("Template image not found!")
-        return None
+        draw = ImageDraw.Draw(base_img)
+        
+        # Font sizes adjust karein (Aap apne hisab se chhota-bada kar sakte ho)
+        font_title = ImageFont.truetype(FONT_PATH, 45) # Name ke liye
+        font_details = ImageFont.truetype(FONT_PATH, 25) # ID/Username ke liye
+        font_msg = ImageFont.truetype(FONT_PATH, 22) # Welcome msg ke liye
 
-    draw = ImageDraw.Draw(base_img)
-    # Positions based on image_4.png
-    FONT_BOLD = ImageFont.truetype(FONT_PATH, 48) # Welcome, {name} (Top right)
-    FONT_NORMAL = ImageFont.truetype(FONT_PATH, 28) # User Details
-    FONT_SMALL = ImageFont.truetype(FONT_PATH, 22) # Bottom Welcome Message
-
-    # (A) Overlay Profile Picture (If available)
-    profile_pasted = False
-    if user.id:
+        # (A) Profile Picture Logic
         try:
-            profile_pic = Image.open(DEFAULT_PROFILE).resize((220, 220)) # Size based on template circle
+            # User ki profile photo nikalne ka logic abhi skip hai simple rakhne ke liye
+            # Sidha placeholder lagate hain coordinates check karne ke liye
+            profile_pic = Image.open(DEFAULT_PROFILE).resize((210, 210))
             mask = Image.new('L', profile_pic.size, 0)
             draw_mask = ImageDraw.Draw(mask)
-            draw_mask.ellipse((0, 0, 220, 220), fill=255)
-            # Paste in the circle position (Approx x=80, y=100)
-            base_img.paste(profile_pic, (80, 100), mask)
-            profile_pasted = True
-        except FileNotFoundError:
-            pass # No default profile found
+            draw_mask.ellipse((0, 0, 210, 210), fill=255)
+            # Circle ki sahi jagah (Template ke hisab se check karein)
+            base_img.paste(profile_pic, (85, 105), mask)
+        except:
+            pass
 
-    # (B) Overlay Dynamic Text (Approximate positions based on template)
-    white = (255, 255, 255, 255)
-    light_grey = (200, 200, 200, 255)
+        # (B) Text Overlay - COORDINATES UPDATED
+        white = (255, 255, 255)
+        
+        # 1. Name Overlay (Template mein jo '[NEW MEMBER NAME]' likha hai uske upar)
+        # Coordinates (x=730, y=75) ke aas pass try karo
+        draw.text((730, 75), f"{user.full_name[:15]}", font=font_title, fill=white, anchor="mm")
 
-    # 1. Title: WELCOME, {name}! (Top right)
-    draw.text((450, 60), f"WELCOME, {user.full_name}!", font=FONT_BOLD, fill=white)
+        # 2. Details Overlay (Boxes ke samne)
+        # User ID
+        draw.text((560, 315), f"{user.id}", font=font_details, fill=white)
+        # Username
+        draw.text((560, 365), f"@{user.username if user.username else 'None'}", font=font_details, fill=white)
+        # Group Name
+        draw.text((560, 415), f"{chat_title[:15]}", font=font_details, fill=white)
 
-    # 2. Member Details (Right panel, below icons)
-    details_text = f"User ID: {user.id}\n\n" \
-                   f"Username: @{user.username if user.username else 'N/A'}\n\n" \
-                   f"Group: {chat_title}"
-    draw.text((450, 310), details_text, font=FONT_NORMAL, fill=light_grey, spacing=12)
+        # 3. Message Overlay (Niche ki khali jagah)
+        msg = "Welcome! Hum khush hain ki aap\nhumare sath hain!"
+        draw.text((450, 700), msg, font=font_msg, fill=white, align="center")
 
-    # 3. Bottom Welcome Message (Bottom section)
-    welcome_msg = "Aap is creative ecosystem ka hissa banne ja rahe hain.\n" \
-                   "Hum khush hain ki aap humare sath hain!"
-    draw.text((380, 680), welcome_msg, font=FONT_SMALL, fill=white, spacing=8)
+        img_byte_arr = io.BytesIO()
+        base_img.save(img_byte_arr, format='PNG')
+        img_byte_arr.seek(0)
+        return img_byte_arr
+    except Exception as e:
+        logging.error(f"Image Error: {e}")
+        return None
 
-    # Convert the resulting image to bytes to send via Telegram
-    img_byte_arr = io.BytesIO()
-    base_img.save(img_byte_arr, format='PNG')
-    img_byte_arr.seek(0)
-    return img_byte_arr
-
-# 3. New Member Detection Handler
 @dp.chat_member(ChatMemberUpdatedFilter(member_status_changed=JOIN_TRANSITION))
 async def on_user_join(event: types.ChatMemberUpdated):
-    """Detects new members, generates, and sends the personalized UI card."""
     if event.chat.id != GROUP_ID:
         return
 
     new_member = event.new_chat_member.user
-    chat_title = event.chat.title
+    card = await generate_welcome_card(new_member, event.chat.title)
 
-    logging.info(f"New user {new_member.full_name} joined {chat_title}")
-
-    # Step 2: Generate the Dynamic Card
-    card_bytes = await generate_welcome_card(new_member, chat_title)
-
-    if card_bytes:
-        # Create Inline Buttons
+    if card:
         builder = InlineKeyboardBuilder()
-        builder.row(
-            types.InlineKeyboardButton(text="📜 Group Rules", url="https://t.me/OG_FRIENDZ"),
-            types.InlineKeyboardButton(text="📢 Stay Updated", url="https://t.me/OG_FRIENDZ")
-        )
-        builder.row(
-            types.InlineKeyboardButton(text="❓ About Us", callback_data="about_us")
-        )
-
-        # Send the generated image with buttons
+        builder.row(types.InlineKeyboardButton(text="📜 Rules", url="https://t.me/example"),
+                    types.InlineKeyboardButton(text="📢 Updates", url="https://t.me/example"))
+        
+        # Send Photo with longer timeout handling
         await bot.send_photo(
             chat_id=event.chat.id,
-            photo=types.BufferedInputFile(card_bytes.read(), filename="welcome.png"),
-            caption=f"Welcome to {chat_title}, {new_member.mention_html()}!",
-            reply_markup=builder.as_markup(),
-            parse_mode="HTML"
-      )
+            photo=types.BufferedInputFile(card.read(), filename="welcome.png"),
+            reply_markup=builder.as_markup()
+        )

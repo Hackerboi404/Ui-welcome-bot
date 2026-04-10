@@ -92,8 +92,8 @@ async def on_user_join(event: types.ChatMemberUpdated):
         # Create Inline Buttons
         builder = InlineKeyboardBuilder()
         builder.row(
-            types.InlineKeyboardButton(text="📜 Group Rules", url="https://t.me/your_rules_link"),
-            types.InlineKeyboardButton(text="📢 Stay Updated", url="https://t.me/your_channel_link")
+            types.InlineKeyboardButton(text="📜 Group Rules", url="https://t.me/OG_FRIENDZ"),
+            types.InlineKeyboardButton(text="📢 Stay Updated", url="https://t.me/OG_FRIENDZ")
         )
         builder.row(
             types.InlineKeyboardButton(text="❓ About Us", callback_data="about_us")
